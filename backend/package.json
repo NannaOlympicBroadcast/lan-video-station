@@ -1,0 +1,22 @@
+{
+  "name": "lvs-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1",
+    "jsonwebtoken": "^9.0.2",
+    "minio": "^8.0.1",
+    "multer": "^1.4.5-lts.1",
+    "pg": "^8.12.0",
+    "uuid": "^9.0.1",
+    "ws": "^8.18.0"
+  }
+}
