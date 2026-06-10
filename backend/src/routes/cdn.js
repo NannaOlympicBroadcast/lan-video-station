@@ -43,23 +43,31 @@ router.get('/nodes', async (_req, res, next) => {
 
 router.post('/nodes', async (req, res, next) => {
   try {
-    const { name, base_url, enabled = true } = req.body || {};
+    const { name, base_url, enabled = true, type = 'edge' } = req.body || {};
     if (!name || !base_url) return res.status(400).json({ error: 'name/base_url 必填' });
+    if (!['edge', 'public'].includes(type)) return res.status(400).json({ error: 'type 必须是 edge 或 public' });
+    if (!/^https?:\/\//.test(base_url)) return res.status(400).json({ error: 'base_url 必须是 http(s) 地址' });
     const { rows } = await db.query(
-      `INSERT INTO cdn_nodes (name, base_url, enabled) VALUES ($1,$2,$3)
-       ON CONFLICT (name) DO UPDATE SET base_url = $2, enabled = $3 RETURNING *`,
-      [name, base_url.replace(/\/$/, ''), enabled]);
+      `INSERT INTO cdn_nodes (name, base_url, enabled, type) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (name) DO UPDATE SET base_url = $2, enabled = $3, type = $4 RETURNING *`,
+      [name, base_url.replace(/\/$/, ''), enabled, type]);
     res.status(201).json(rows[0]);
   } catch (e) { next(e); }
 });
 
 router.patch('/nodes/:id', async (req, res, next) => {
   try {
-    const { base_url, enabled, name } = req.body || {};
+    const { base_url, enabled, name, type } = req.body || {};
+    if (type !== undefined && !['edge', 'public'].includes(type)) {
+      return res.status(400).json({ error: 'type 必须是 edge 或 public' });
+    }
+    if (base_url !== undefined && !/^https?:\/\//.test(base_url)) {
+      return res.status(400).json({ error: 'base_url 必须是 http(s) 地址' });
+    }
     const { rows } = await db.query(
       `UPDATE cdn_nodes SET name = COALESCE($1, name), base_url = COALESCE($2, base_url),
-        enabled = COALESCE($3, enabled) WHERE id = $4 RETURNING *`,
-      [name, base_url && base_url.replace(/\/$/, ''), enabled, req.params.id]);
+        enabled = COALESCE($3, enabled), type = COALESCE($4, type) WHERE id = $5 RETURNING *`,
+      [name, base_url && base_url.replace(/\/$/, ''), enabled, type, req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'not found' });
     res.json(rows[0]);
   } catch (e) { next(e); }
@@ -72,7 +80,7 @@ router.delete('/nodes/:id', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// 健康检查（管理员触发，探测所有节点 /edge/health）
+// 健康检查（管理员触发）：自建边缘节点探测 /edge/health；公网 CDN 仅探测可达性（HEAD 根路径）
 router.post('/nodes/check', async (_req, res, next) => {
   try {
     const { rows } = await db.query('SELECT * FROM cdn_nodes');
@@ -82,12 +90,14 @@ router.post('/nodes/check', async (_req, res, next) => {
       try {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), 4000);
-        const r = await fetch(`${n.base_url}/edge/health`, { signal: ctrl.signal });
+        const r = n.type === 'public'
+          ? await fetch(n.base_url, { method: 'HEAD', signal: ctrl.signal })
+          : await fetch(`${n.base_url}/edge/health`, { signal: ctrl.signal });
         clearTimeout(t);
-        ok = r.ok;
+        ok = n.type === 'public' ? r.status < 500 : r.ok;
       } catch { ok = false; }
       if (ok) await db.query('UPDATE cdn_nodes SET last_seen_at = now() WHERE id = $1', [n.id]);
-      results.push({ id: n.id, name: n.name, base_url: n.base_url, healthy: ok });
+      results.push({ id: n.id, name: n.name, base_url: n.base_url, type: n.type, healthy: ok });
     }
     res.json(results);
   } catch (e) { next(e); }

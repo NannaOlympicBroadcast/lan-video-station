@@ -47,6 +47,8 @@ docker compose up -d --build
 
 **CDN**：`cdn-edge` 为 nginx 缓存边缘（直播 HLS 分片缓存 + FLV 透传、点播分片缓存），启动后自动向 API 注册；管理后台可增删/启停节点、健康检查；播放接口在启用节点间轮询调度，`?cdn=off` 强制回源。要加节点，复制 compose 中 `cdn-edge-1` 块（或在其他机器上单独 `docker build ./cdn-edge` 部署，配好 `ORIGIN_LIVE/ORIGIN_STORAGE/EDGE_PUBLIC_URL`）。
 
+管理后台 CDN 节点管理还支持添加「公网 CDN」类型节点（如腾讯云 CDN、Cloudflare CDN 等）：将公网 CDN 的源站配置指向本站（回源 `/storage/` 路径），然后在管理后台填写该 CDN 的访问域名（如 `https://cdn.example.com`）即可加入轮询调度。公网 CDN 节点的健康检查为根路径可达性探测（不依赖 `/edge/health`）。
+
 ## 开放 API
 
 认证二选一：`Authorization: Bearer <JWT>` 或 `X-API-Key: lvs_xxx`（设置页创建，全功能）。

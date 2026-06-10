@@ -99,17 +99,25 @@
 
     <!-- CDN -->
     <div v-show="tab === 'cdn'" class="card form-grid">
-      <h3>CDN 边缘节点</h3>
+      <h3>CDN 节点</h3>
+      <p class="muted">局域网边缘节点：自建 cdn-edge，自动注册 + 健康检查。公网 CDN：腾讯云 CDN / Cloudflare 等，源站需指向本站 <code>/storage/</code> 路径，此处填写其访问域名（如 <code>https://cdn.example.com</code>）。</p>
       <div class="row">
         <input v-model="cdnForm.name" placeholder="节点名" style="max-width:160px" />
-        <input v-model="cdnForm.base_url" placeholder="http://edge-ip:8081" style="max-width:260px" />
+        <select v-model="cdnForm.type" style="max-width:170px">
+          <option value="edge">局域网边缘节点</option>
+          <option value="public">公网 CDN</option>
+        </select>
+        <input v-model="cdnForm.base_url"
+          :placeholder="cdnForm.type === 'public' ? 'https://cdn.example.com' : 'http://edge-ip:8081'"
+          style="max-width:260px" />
         <button @click="addNode">添加节点</button>
         <button class="ghost" @click="checkNodes">健康检查</button>
       </div>
       <table>
-        <tr><th>名称</th><th>地址</th><th>启用</th><th>最后心跳</th><th></th></tr>
+        <tr><th>名称</th><th>类型</th><th>地址</th><th>启用</th><th>最后心跳</th><th></th></tr>
         <tr v-for="n in nodes" :key="n.id">
           <td>{{ n.name }} <span v-if="health[n.id] !== undefined" class="tag" :class="health[n.id] ? 'ok' : 'warn'">{{ health[n.id] ? '健康' : '不可达' }}</span></td>
+          <td><span class="tag">{{ n.type === 'public' ? '公网 CDN' : '边缘节点' }}</span></td>
           <td><code>{{ n.base_url }}</code></td>
           <td><input type="checkbox" style="width:auto" :checked="n.enabled" @change="toggleNode(n, $event)" /></td>
           <td class="muted">{{ n.last_seen_at ? new Date(n.last_seen_at).toLocaleString() : '-' }}</td>
@@ -146,7 +154,7 @@ const tabs = [
 const tab = ref('review');
 const videos = ref([]), videoStatus = ref('pending'), reviewRequired = ref(true);
 const reports = ref([]), users = ref([]), userQ = ref(''), rooms = ref([]), nodes = ref([]);
-const cdnForm = ref({ name: '', base_url: '' });
+const cdnForm = ref({ name: '', base_url: '', type: 'edge' });
 const health = ref({});
 const liveEvents = ref([]), wsOk = ref(false);
 let ws = null;
@@ -204,7 +212,7 @@ async function cut(r) {
 async function loadNodes() { nodes.value = await api('/cdn/nodes'); }
 async function addNode() {
   await api('/cdn/nodes', { method: 'POST', body: { ...cdnForm.value } });
-  cdnForm.value = { name: '', base_url: '' };
+  cdnForm.value = { name: '', base_url: '', type: 'edge' };
   loadNodes();
 }
 async function toggleNode(n, e) {

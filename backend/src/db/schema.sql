@@ -183,6 +183,8 @@ CREATE TABLE IF NOT EXISTS cdn_nodes (
   last_seen_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 节点类型：edge = 局域网自建边缘节点（自动注册 + /edge/health 健康检查）；public = 公网 CDN（如腾讯云/Cloudflare，手动配置，仅做可达性探测）
+ALTER TABLE cdn_nodes ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'edge' CHECK (type IN ('edge','public'));
 
 CREATE TABLE IF NOT EXISTS site_settings (
   key   TEXT PRIMARY KEY,
