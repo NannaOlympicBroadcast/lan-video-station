@@ -10,7 +10,7 @@ const db = require('../db/pool');
 const config = require('../config');
 const { client: minio, objectUrl } = require('../lib/minio');
 const { optionalAuth, requireAuth } = require('../middleware/auth');
-const { canSee } = require('./videos');
+const { canAccess } = require('./videos');
 
 const upload = multer({ dest: path.join(os.tmpdir(), 'lvs-subs'), limits: { fileSize: 5 * 1024 * 1024 } });
 const router = express.Router({ mergeParams: true });
@@ -18,7 +18,7 @@ const router = express.Router({ mergeParams: true });
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const v = (await db.query('SELECT * FROM videos WHERE id = $1', [req.params.videoId])).rows[0];
-    if (!v || !canSee(v, req.user)) return res.status(404).json({ error: 'video not found' });
+    if (!v || !(await canAccess(v, req.user, req.query.password))) return res.status(404).json({ error: 'video not found' });
     const { rows } = await db.query(
       `SELECT s.id, s.lang, s.label, s.format, s.object_key, s.created_at, u.username AS uploader
        FROM subtitles s JOIN users u ON u.id = s.uploader_id WHERE s.video_id = $1 ORDER BY s.id`, [v.id]);
@@ -31,7 +31,7 @@ router.post('/', requireAuth, upload.single('file'), async (req, res, next) => {
   const tmp = req.file && req.file.path;
   try {
     const v = (await db.query('SELECT * FROM videos WHERE id = $1', [req.params.videoId])).rows[0];
-    if (!v || !canSee(v, req.user)) return res.status(404).json({ error: 'video not found' });
+    if (!v || !(await canAccess(v, req.user, req.query.password))) return res.status(404).json({ error: 'video not found' });
     if (!req.file) return res.status(400).json({ error: '缺少 file 字段' });
 
     const ext = path.extname(req.file.originalname || '').toLowerCase();

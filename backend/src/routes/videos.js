@@ -31,6 +31,18 @@ function canSee(video, user) {
   return video.visibility === 'public' && video.status === 'approved';
 }
 
+// 私有视频：白名单用户或密码正确可解锁观看
+async function canAccess(video, user, password) {
+  if (canSee(video, user)) return true;
+  if (video.visibility !== 'private') return false;
+  if (user) {
+    const { rows } = await db.query(
+      'SELECT 1 FROM video_whitelist WHERE video_id = $1 AND user_id = $2', [video.id, user.id]);
+    if (rows[0]) return true;
+  }
+  return !!(video.unlock_password && password && password === video.unlock_password);
+}
+
 function publicVideo(v, edge) {
   return {
     id: v.id, owner_id: v.owner_id, owner_name: v.owner_name,
@@ -39,6 +51,7 @@ function publicVideo(v, edge) {
     visibility: v.visibility, status: v.status,
     reject_reason: v.reject_reason, takedown_reason: v.takedown_reason,
     views: Number(v.views || 0), created_at: v.created_at,
+    has_password: !!v.unlock_password,
     thumbnail_url: v.thumbnail_key ? objectUrl(config.buckets.thumbnails, v.thumbnail_key, edge) : null
   };
 }
@@ -65,7 +78,7 @@ router.get('/mine', requireAuth, async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-// 上传（multipart: file 必填, title/description/visibility 可选）
+// 上传（multipart: file 必填, title/description/visibility/unlock_password/collection_id 可选）
 router.post('/', requireAuth, upload.single('file'), async (req, res, next) => {
   const tmp = req.file && req.file.path;
   try {
@@ -73,6 +86,13 @@ router.post('/', requireAuth, upload.single('file'), async (req, res, next) => {
     const title = (req.body.title || req.file.originalname || '未命名').slice(0, 200);
     const description = (req.body.description || '').slice(0, 5000);
     const visibility = req.body.visibility === 'private' ? 'private' : 'public';
+    const unlockPassword = visibility === 'private' && req.body.unlock_password ? req.body.unlock_password : null;
+    const collectionId = req.body.collection_id || null;
+    if (collectionId) {
+      const c = await db.query('SELECT id FROM collections WHERE id = $1 AND owner_id = $2',
+        [collectionId, req.user.id]);
+      if (!c.rows[0]) return res.status(400).json({ error: '收藏夹不存在或不属于你' });
+    }
 
     const needReview = await reviewRequired();
     // 私有视频不需要审核；公开视频按站点设置
@@ -95,10 +115,16 @@ router.post('/', requireAuth, upload.single('file'), async (req, res, next) => {
     }
 
     const { rows } = await db.query(
-      `INSERT INTO videos (id, owner_id, title, description, object_key, thumbnail_key, mime, size_bytes, duration_sec, visibility, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      `INSERT INTO videos (id, owner_id, title, description, object_key, thumbnail_key, mime, size_bytes, duration_sec, visibility, status, unlock_password)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
       [id, req.user.id, title, description, objectKey, thumbnailKey,
-       req.file.mimetype || 'video/mp4', req.file.size, duration, visibility, status]);
+       req.file.mimetype || 'video/mp4', req.file.size, duration, visibility, status, unlockPassword]);
+
+    if (collectionId) {
+      await db.query(
+        `INSERT INTO collection_videos (collection_id, video_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+        [collectionId, id]);
+    }
 
     await emitToUser(req.user.id, 'video.uploaded', { videoId: id, title, status });
     await emitToAdmins('admin.video.uploaded', {
@@ -109,24 +135,33 @@ router.post('/', requireAuth, upload.single('file'), async (req, res, next) => {
   finally { if (tmp && fs.existsSync(tmp)) fs.unlinkSync(tmp); }
 });
 
-// 详情
+// 详情（私有视频可带 ?password= 解锁；无权限时返回锁定占位信息）
 router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
     const { rows } = await db.query(
       `SELECT v.*, u.username AS owner_name FROM videos v JOIN users u ON u.id = v.owner_id WHERE v.id = $1`,
       [req.params.id]);
     const v = rows[0];
-    if (!v || !canSee(v, req.user)) return res.status(404).json({ error: 'video not found' });
+    if (!v) return res.status(404).json({ error: 'video not found' });
+    if (!(await canAccess(v, req.user, req.query.password))) {
+      if (v.visibility === 'private') {
+        return res.json({
+          id: v.id, title: v.title, owner_id: v.owner_id, owner_name: v.owner_name,
+          locked: true, has_password: !!v.unlock_password
+        });
+      }
+      return res.status(404).json({ error: 'video not found' });
+    }
     res.json(publicVideo(v));
   } catch (e) { next(e); }
 });
 
-// 播放/下载直链（可经 CDN 边缘）；?cdn=off 强制回源
+// 播放/下载直链（可经 CDN 边缘）；?cdn=off 强制回源；私有视频可带 ?password=
 router.get('/:id/play', optionalAuth, async (req, res, next) => {
   try {
     const { rows } = await db.query('SELECT * FROM videos WHERE id = $1', [req.params.id]);
     const v = rows[0];
-    if (!v || !canSee(v, req.user)) return res.status(404).json({ error: 'video not found' });
+    if (!v || !(await canAccess(v, req.user, req.query.password))) return res.status(404).json({ error: 'video not found' });
     const edge = req.query.cdn === 'off' ? null : await pickEdge();
     db.query('UPDATE videos SET views = views + 1 WHERE id = $1', [v.id]).catch(() => {});
     res.json({
@@ -145,12 +180,59 @@ router.patch('/:id', requireAuth, async (req, res, next) => {
     const v = rows[0];
     if (!v) return res.status(404).json({ error: 'not found' });
     if (v.owner_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
-    const { title, description, visibility } = req.body || {};
+    const { title, description, visibility, unlock_password } = req.body || {};
+    // 解锁密码：传空字符串取消，undefined 保持不变
+    const newPassword = unlock_password === undefined ? v.unlock_password
+      : (unlock_password === '' ? null : unlock_password);
     const upd = await db.query(
       `UPDATE videos SET title = COALESCE($1, title), description = COALESCE($2, description),
-        visibility = COALESCE($3, visibility) WHERE id = $4 RETURNING *`,
-      [title, description, visibility, v.id]);
+        visibility = COALESCE($3, visibility), unlock_password = $4 WHERE id = $5 RETURNING *`,
+      [title, description, visibility, newPassword, v.id]);
     res.json(publicVideo(upd.rows[0]));
+  } catch (e) { next(e); }
+});
+
+// ---- 私有视频白名单（视频主/管理员管理，按用户名添加） ----
+router.get('/:id/whitelist', requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM videos WHERE id = $1', [req.params.id]);
+    const v = rows[0];
+    if (!v) return res.status(404).json({ error: 'not found' });
+    if (v.owner_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+    const list = await db.query(
+      `SELECT w.user_id, u.username, w.created_at FROM video_whitelist w
+       JOIN users u ON u.id = w.user_id WHERE w.video_id = $1 ORDER BY w.created_at`, [v.id]);
+    res.json(list.rows);
+  } catch (e) { next(e); }
+});
+
+router.post('/:id/whitelist', requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM videos WHERE id = $1', [req.params.id]);
+    const v = rows[0];
+    if (!v) return res.status(404).json({ error: 'not found' });
+    if (v.owner_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+    const { user_id, username } = req.body || {};
+    let targetId = user_id;
+    if (!targetId && username) {
+      const u = await db.query('SELECT id FROM users WHERE username = $1', [username]);
+      targetId = u.rows[0] && u.rows[0].id;
+    }
+    if (!targetId) return res.status(400).json({ error: '用户不存在（需要 user_id 或 username）' });
+    await db.query(
+      `INSERT INTO video_whitelist (video_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [v.id, targetId]);
+    res.status(201).json({ ok: true });
+  } catch (e) { next(e); }
+});
+
+router.delete('/:id/whitelist/:userId', requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM videos WHERE id = $1', [req.params.id]);
+    const v = rows[0];
+    if (!v) return res.status(404).json({ error: 'not found' });
+    if (v.owner_id !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ error: 'forbidden' });
+    await db.query('DELETE FROM video_whitelist WHERE video_id = $1 AND user_id = $2', [v.id, req.params.userId]);
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 
@@ -169,3 +251,5 @@ router.delete('/:id', requireAuth, async (req, res, next) => {
 
 module.exports = router;
 module.exports.canSee = canSee;
+module.exports.canAccess = canAccess;
+module.exports.publicVideo = publicVideo;

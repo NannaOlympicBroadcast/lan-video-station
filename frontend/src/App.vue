@@ -4,6 +4,7 @@
     <router-link to="/" class="link">视频</router-link>
     <router-link to="/live" class="link">直播</router-link>
     <router-link v-if="auth.loggedIn" to="/upload" class="link">上传</router-link>
+    <router-link v-if="auth.loggedIn" to="/collections" class="link">收藏夹</router-link>
     <span class="spacer"></span>
     <template v-if="auth.loggedIn">
       <router-link v-if="auth.isAdmin" to="/admin" class="link">管理后台</router-link>

@@ -26,6 +26,10 @@ docker compose up -d --build
 
 **视频**：注册/登录、上传（自动取时长 + 生成缩略图，存 MinIO）、播放（公开/私有）、评论与回复、字幕（vtt/srt 上传，srt 自动转 vtt）、举报视频与评论、下载直链。
 
+**私有视频解锁**：私有视频默认仅自己可见；视频主可设置「解锁密码」（观众凭密码观看）或将用户名加入白名单（白名单用户登录后直接观看）。上传时可设密码，视频页（视频主可见）可改密码/管理白名单。
+
+**收藏夹**：创建/分享视频收藏夹（公开收藏夹复制链接即可分享，他人无法看到的私有视频在列表中以 🔒 锁定占位显示）；从收藏夹打开视频后，右侧显示收藏夹内全部视频可连续切换；上传发布时可选择已有收藏夹自动加入；视频页「⭐ 收藏」可随时加入/新建收藏夹。
+
 **审核**：管理后台可切换「免审模式」。开审核时公开视频需管理员通过才上架；管理员可以理由下架视频（触发 `video.taken_down` 事件）、封禁用户一定时长（小时，触发 `account.banned`）。
 
 **直播**：
@@ -51,7 +55,14 @@ docker compose up -d --build
 POST /api/auth/register|login          注册/登录
 GET  /api/videos?q=                    公开视频列表
 POST /api/videos                       上传（multipart: file,title,visibility）
-GET  /api/videos/:id/play              播放/下载直链（可经 CDN）
+GET  /api/videos/:id/play              播放/下载直链（可经 CDN；私有视频可带 ?password=）
+GET|POST /api/videos/:id/whitelist     私有视频白名单（视频主）/ 添加 {username}
+DELETE /api/videos/:id/whitelist/:uid  移除白名单用户
+GET  /api/collections/mine             我的收藏夹
+POST /api/collections                  创建收藏夹 {name, description, visibility}
+GET  /api/collections/:id              收藏夹详情（含视频列表，公开收藏夹可分享）
+POST /api/collections/:id/videos       添加视频 {video_id}
+DELETE /api/collections/:id/videos/:vid  移除视频
 GET|POST /api/videos/:id/comments      评论列表 / 评论与回复(parent_id)
 GET|POST /api/videos/:id/subtitles     字幕列表 / 添加字幕
 GET  /api/users/:id /:id/videos        创作者信息 / 主页视频列表
@@ -105,4 +116,4 @@ cdn-edge/   CDN 边缘节点镜像（nginx 缓存 + 自动注册）
 
 - 私有视频/未上架视频的对象 URL 为不可猜测的随机 key（MinIO 桶公共读 + nginx 反代），未走逐请求签名；如需更强隔离可改为 API 代理流式输出。
 - HLS 分片请求不做逐片鉴权（密码/黑名单在获取播放地址与聊天/连麦时校验）。
-- 直播间密码明文存库（仅限内网使用场景）。
+- 直播间密码、私有视频解锁密码明文存库（仅限内网使用场景）。
