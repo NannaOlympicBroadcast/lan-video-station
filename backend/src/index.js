@@ -25,6 +25,7 @@ async function main() {
   app.use('/api/videos/:videoId/comments', require('./routes/comments'));
   app.use('/api/videos/:videoId/subtitles', require('./routes/subtitles'));
   app.use('/api/videos', require('./routes/videos'));
+  app.use('/api/collections', require('./routes/collections'));
   app.use('/api/reports', require('./routes/reports'));
   app.use('/api/live', require('./routes/live'));
   app.use('/api/admin', require('./routes/admin'));

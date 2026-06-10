@@ -41,6 +41,34 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 CREATE INDEX IF NOT EXISTS idx_videos_owner ON videos(owner_id);
 CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status, visibility);
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS unlock_password TEXT; -- 明文存储仅限局域网场景；私有视频可凭密码解锁观看
+
+-- 私有视频白名单（用户名加入后可直接观看）
+CREATE TABLE IF NOT EXISTS video_whitelist (
+  video_id   UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  user_id    INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (video_id, user_id)
+);
+
+-- 视频收藏夹（公开收藏夹可通过链接分享）
+CREATE TABLE IF NOT EXISTS collections (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id    INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  visibility  TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public','private')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_collections_owner ON collections(owner_id);
+
+CREATE TABLE IF NOT EXISTS collection_videos (
+  collection_id UUID NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+  video_id      UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+  position      SERIAL,
+  added_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (collection_id, video_id)
+);
 
 CREATE TABLE IF NOT EXISTS subtitles (
   id          SERIAL PRIMARY KEY,

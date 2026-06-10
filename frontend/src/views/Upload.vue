@@ -7,7 +7,13 @@
       <textarea v-model="description" rows="3" placeholder="简介"></textarea>
       <select v-model="visibility">
         <option value="public">公开（可能需要管理员审核）</option>
-        <option value="private">私有（仅自己可见）</option>
+        <option value="private">私有（密码解锁或白名单可见）</option>
+      </select>
+      <input v-if="visibility === 'private'" v-model="unlockPassword"
+        placeholder="解锁密码（可选，观众凭密码观看；白名单可在视频页设置）" />
+      <select v-model="collectionId">
+        <option value="">不加入收藏夹</option>
+        <option v-for="c in collections" :key="c.id" :value="c.id">加入收藏夹：{{ c.name }}</option>
       </select>
       <button :disabled="!file || uploading" @click="submit">
         {{ uploading ? `上传中 ${progress}%` : '上传' }}
@@ -38,6 +44,7 @@ import { api } from '../api';
 import { useAuth } from '../store';
 
 const file = ref(null), title = ref(''), description = ref(''), visibility = ref('public');
+const unlockPassword = ref(''), collectionId = ref(''), collections = ref([]);
 const uploading = ref(false), progress = ref(0), msg = ref(''), ok = ref(false);
 const mine = ref([]);
 const auth = useAuth();
@@ -52,6 +59,7 @@ function statusText(v) {
 }
 
 async function loadMine() { mine.value = await api('/videos/mine'); }
+async function loadCollections() { collections.value = await api('/collections/mine'); }
 
 function submit() {
   msg.value = ''; uploading.value = true; progress.value = 0;
@@ -60,6 +68,8 @@ function submit() {
   fd.append('title', title.value);
   fd.append('description', description.value);
   fd.append('visibility', visibility.value);
+  if (visibility.value === 'private' && unlockPassword.value) fd.append('unlock_password', unlockPassword.value);
+  if (collectionId.value) fd.append('collection_id', collectionId.value);
   // XHR 以获得上传进度
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/videos');
@@ -83,5 +93,5 @@ async function del(v) {
   loadMine();
 }
 
-onMounted(loadMine);
+onMounted(() => { loadMine(); loadCollections(); });
 </script>

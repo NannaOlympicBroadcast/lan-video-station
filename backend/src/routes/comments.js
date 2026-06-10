@@ -4,21 +4,21 @@ const express = require('express');
 const db = require('../db/pool');
 const { optionalAuth, requireAuth } = require('../middleware/auth');
 const { emitToUser } = require('../lib/events');
-const { canSee } = require('./videos');
+const { canAccess } = require('./videos');
 
 const router = express.Router({ mergeParams: true });
 
-async function getVisibleVideo(videoId, user) {
+async function getVisibleVideo(videoId, user, password) {
   const { rows } = await db.query('SELECT * FROM videos WHERE id = $1', [videoId]);
   const v = rows[0];
-  if (!v || !canSee(v, user)) return null;
+  if (!v || !(await canAccess(v, user, password))) return null;
   return v;
 }
 
 // 评论列表（含回复，扁平返回带 parent_id）
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
-    const v = await getVisibleVideo(req.params.videoId, req.user);
+    const v = await getVisibleVideo(req.params.videoId, req.user, req.query.password);
     if (!v) return res.status(404).json({ error: 'video not found' });
     const { rows } = await db.query(
       `SELECT c.id, c.parent_id, c.content, c.created_at, c.deleted, u.id AS user_id, u.username
@@ -31,7 +31,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
 // 发表评论 / 回复（body: content, parent_id 可选）
 router.post('/', requireAuth, async (req, res, next) => {
   try {
-    const v = await getVisibleVideo(req.params.videoId, req.user);
+    const v = await getVisibleVideo(req.params.videoId, req.user, req.query.password);
     if (!v) return res.status(404).json({ error: 'video not found' });
     const { content, parent_id } = req.body || {};
     if (!content || !content.trim()) return res.status(400).json({ error: 'content 必填' });
